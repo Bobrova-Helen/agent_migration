@@ -1,0 +1,1 @@
+CREATE TABLE events USING PARQUET PARTITIONED BY (event_date);

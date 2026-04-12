@@ -1,0 +1,18 @@
+# .dockerignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.idea/
+.vscode/
+.env
+.env.local
+*.md
+sample/
+migration_report.md
+pytest_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
