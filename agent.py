@@ -6,6 +6,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
+import argparse
 
 # ==================== КОНФИГУРАЦИЯ ====================
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -319,20 +320,77 @@ def save_report(result: str, output_path: str = "migration_report.md"):
     logger.info(f"📄 Отчёт сохранён: {output_path}")
 
 
-# ==================== ЗАПУСК ====================
-if __name__ == "__main__":
-    # Создаём тестовые файлы для демо
-    Path("sample").mkdir(exist_ok=True)
-    Path("sample/etl.py").write_text("""df = spark.read.parquet("s3://raw/")
-df.write.partitionBy("date").parquet("s3://processed/")
-""")
-    Path("sample/schema.sql").write_text("CREATE TABLE events USING PARQUET PARTITIONED BY (event_date);")
+# ==================== CLI ENTRY POINT ====================
+def main():
+    """
+    Запуск агента из командной строки.
 
-    print("🚀 Запуск агента...")
-    result = run_agent("sample")
+    Использование:
+        python agent.py                          # демо-режим с папкой sample/
+        python agent.py ./my_project             # сканировать конкретную папку
+        python agent.py ./src/etl.py             # сканировать один файл
+    """
+
+    parser = argparse.ArgumentParser(
+        description="🧊 Parquet → Iceberg Migration Agent",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Примеры:
+  %(prog)s                          # Запустить демо с тестовыми файлами
+  %(prog)s ./my_project             # Мигрировать код в папке ./my_project
+  %(prog)s ./src/etl.py             # Мигрировать один файл
+  %(prog)s ./src --output report.md # Сохранить отчёт в указанный файл
+        """
+    )
+    parser.add_argument(
+        "input_path",
+        nargs="?",
+        default=None,
+        help="Путь к файлу или директории с кодом (по умолчанию: демо-режим)"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="migration_report.md",
+        help="Путь для сохранения отчёта (по умолчанию: migration_report.md)"
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Создать демо-файлы и запустить на них (игнорирует input_path)"
+    )
+
+    args = parser.parse_args()
+
+    # 🎯 Режим 1: Демо с созданием тестовых файлов
+    if args.demo or args.input_path is None:
+        sample_dir = Path("sample")
+        if not sample_dir.exists():
+            sample_dir.mkdir(exist_ok=True)
+            (sample_dir / "etl.py").write_text(
+                'df = spark.read.parquet("s3://raw/")\n'
+                'df.write.partitionBy("date").parquet("s3://processed/")\n'
+            )
+            (sample_dir / "schema.sql").write_text(
+                "CREATE TABLE events USING PARQUET PARTITIONED BY (event_date);"
+            )
+            logger.info("📁 Демо-файлы созданы в папке 'sample/'")
+        input_path = "sample"
+    else:
+        # 🎯 Режим 2: Пользовательский путь
+        input_path = args.input_path
+        if not Path(input_path).exists():
+            logger.error(f"❌ Путь не найден: {input_path}")
+            sys.exit(1)
+
+    print(f"🚀 Запуск агента для: {input_path}")
+    result = run_agent(input_path)
+
     print("\n" + "=" * 70)
     print(result)
     print("=" * 70)
 
-    # 🎁 Сохраняем отчёт в файл
-    save_report(result)
+    save_report(result, output_path=args.output)
+
+
+if __name__ == "__main__":
+    main()

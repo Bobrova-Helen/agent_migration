@@ -1,17 +1,12 @@
 # 📊 Parquet → Iceberg Migration Report
-**Generated:** 2026-04-12 13:07:24
+**Generated:** 2026-04-13 13:29:03
 
 Мигрированные блоки кода:
 ```
 df = spark.read.format("iceberg").load("s3://raw/") # Migrated to Iceberg
-```
-
-```
 CREATE TABLE events USING ICEBERG PARTITIONED BY (event_date);
 ```
-
-Статус валидации: ✅ Проанализировано: 2 файлов. 🔄 Мигрировано: 0 блоков. 🎉 Чисто!
-
+Статус валидации: ✅
 Рекомендации по data velocity:
 🔹 Data Velocity & Architecture Assessment:
 • Parquet: обычно daily-batch (cron/airflow), задержка 1-24ч.
