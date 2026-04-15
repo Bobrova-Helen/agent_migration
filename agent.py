@@ -32,11 +32,11 @@ def analyze_code(input_path: str) -> Dict[str, Any]:
     if not path.exists():
         return {"error": f"Path not found: {input_path}"}
 
-    files = [path] if path.is_file() else list(path.rglob("*.py")) + list(path.rglob("*.sql"))
+    files = [path] if path.is_file() else list(path.rglob("*.py")) + list(path.rglob("*.sql")) + list(path.rglob("*.scala"))
     findings = {"files_analyzed": 0, "parquet_patterns": []}
 
     re_read = re.compile(r'(\w+)\.read\.(?:parquet|format\s*\(\s*["\']parquet["\']\s*\))', re.I)
-    re_write = re.compile(r'(\w+)\.write\.(?:parquet|format\s*\(\s*["\']parquet["\']\s*\))', re.I)
+    re_write = re.compile(r'\.format\s*\(\s*["\']parquet["\']\s*\)', re.I)
     re_sql = re.compile(r'USING\s+PARQUET', re.I)
 
     for f in files:
@@ -82,6 +82,7 @@ def apply_iceberg_migration(findings_json: Union[str, Dict, List]) -> Dict[str, 
          r'\1.writeTo("catalog.db.table").using("iceberg").createOrReplace() # Migrated to Iceberg'),
         (r'USING\s+PARQUET', 'USING ICEBERG'),
         (r'partitionBy\s*\((.*?)\)', r'partitionedWith(\1) # Iceberg hidden partitioning'),
+        (r'\.format\s*\(\s*["\']parquet["\']\s*\)', '.format("iceberg")'),
     ]
 
     for p in patterns:
@@ -103,29 +104,51 @@ def apply_iceberg_migration(findings_json: Union[str, Dict, List]) -> Dict[str, 
 def validate_and_assess(migrated_json: Union[str, Dict], original_json: Union[str, Dict]) -> Dict[str, Any]:
     """Проверяет миграцию и даёт рекомендации по data velocity."""
 
+    # 1. Безопасный парсинг аргументов
     def parse_arg(arg):
         if isinstance(arg, str):
             try:
                 return json.loads(arg)
-            except:
+            except json.JSONDecodeError as e:
+                # Если JSON кривой, логируем ошибку (в консоль), но не ломаем всё
+                print(f"⚠️ Ошибка парсинга JSON: {e}")
                 return {}
         return arg if isinstance(arg, dict) else {}
 
     mig = parse_arg(migrated_json)
     orig = parse_arg(original_json)
 
-    # 🎯 Ищем блоки в нескольких возможных местах (защита от разной структуры ответа LLM)
-    blocks = (
-            mig.get("blocks") or
-            mig.get("migrated_code_blocks") or
-            mig.get("result", {}).get("blocks") or
-            (mig.get("result") if isinstance(mig.get("result"), list) else None) or
-            []
-    )
-    if isinstance(blocks, dict) and "original" in blocks:  # один блок вместо списка
+    # 2. Гибкий поиск блоков (поддержка разных форматов ответа LLM)
+    blocks = []
+
+    # Вариант А: mig — это сразу список блоков
+    if isinstance(mig, list):
+        blocks = mig
+
+    # Вариант Б: mig — это словарь
+    elif isinstance(mig, dict):
+        # 1. Прямой ключ "blocks"
+        if "blocks" in mig:
+            blocks = mig["blocks"]
+        # 2. Вложенный ключ "result": {"blocks": [...]}
+        elif "result" in mig:
+            res = mig["result"]
+            if isinstance(res, list):
+                blocks = res
+            elif isinstance(res, dict) and "blocks" in res:
+                blocks = res["blocks"]
+            elif isinstance(res, dict) and "original" in res:
+                blocks = [res]  # Один объект вместо списка
+        # 3. Ключ "migrated_code_blocks"
+        elif "migrated_code_blocks" in mig:
+            blocks = mig["migrated_code_blocks"]
+
+    if isinstance(blocks, dict) and "original" in blocks:
         blocks = [blocks]
 
-    # Считаем упоминания parquet, которые НЕ заменены на iceberg
+    if not isinstance(blocks, list):
+        blocks = []
+
     leftovers = []
     for b in blocks:
         if not isinstance(b, dict): continue
